@@ -37,23 +37,24 @@ public enum Restorer {
     }
 
     /// 当前窗口与布局的差异，只读不移动。用于检查 macOS 原生恢复的效果。
-    /// 已关闭的窗口不算差异。
+    /// 已关闭的窗口不算差异；Space 顺序用与恢复相同的规划判断，规划认为无需再动的（例如做不到的
+    /// "全屏排在普通桌面之前"）不算差异，避免报出恢复也消除不了的"差异"。
     public nonisolated static func differences(from layout: Layout, in environment: DisplayEnvironment) -> [String] {
         let live = WindowCatalog.capture(in: environment)
-        let matches = WindowMatcher.match(saved: layout.windows.map(\.matchCandidate), live: live.map(\.matchCandidate))
+        let pairs = pairUp(layout, live: live, in: environment).pairs
+        let reentering = Set(plans(for: layout, pairs: pairs, live: live, in: environment).flatMap { $0.1.steps.map(\.windowID) })
         func name(_ uuid: String) -> String { environment.display(uuid: uuid)?.name ?? String(uuid.prefix(8)) }
 
-        return layout.windows.enumerated().compactMap { index, record in
-            guard let liveIndex = matches[index] else { return nil }
-            let window = live[liveIndex]
+        return pairs.compactMap { pair in
+            let (record, window) = (pair.record, pair.window)
             if window.displayUUID != record.displayUUID {
                 return "\(window.label)：在 \(name(window.displayUUID))，应在 \(name(record.displayUUID))"
             }
             if window.isFullScreen != record.isFullScreen {
                 return "\(window.label)：\(record.isFullScreen ? "应为全屏" : "不应全屏")"
             }
-            if record.isFullScreen, let index = window.space?.index, index != record.spaceIndex {
-                return "\(window.label)：第 \(index) 个 Space，应为第 \(record.spaceIndex) 个"
+            if record.isFullScreen, reentering.contains(window.windowID) {
+                return "\(window.label)：Space 顺序与记录不符（当前第 \(window.space?.index ?? 0) 个）"
             }
             if !record.isFullScreen, let display = environment.display(uuid: record.displayUUID),
                !FrameMapper.isClose(window.frame, FrameMapper.place(record.frame, on: display.frame.cgRect)) {
@@ -69,6 +70,27 @@ public enum Restorer {
         let window: LiveWindow
     }
 
+    /// 配对保存的记录与当前窗口；同时返回找不到窗口的记录和目标显示器未接入的记录
+    private nonisolated static func pairUp(_ layout: Layout, live: [LiveWindow], in environment: DisplayEnvironment)
+        -> (pairs: [Pair], notFound: [String], missingDisplay: [String]) {
+        let matches = WindowMatcher.match(saved: layout.windows.map(\.matchCandidate), live: live.map(\.matchCandidate))
+        var result: (pairs: [Pair], notFound: [String], missingDisplay: [String]) = ([], [], [])
+        for (index, record) in layout.windows.enumerated() {
+            guard let liveIndex = matches[index] else { result.notFound.append(label(record)); continue }
+            guard environment.display(uuid: record.displayUUID) != nil else { result.missingDisplay.append(label(record)); continue }
+            result.pairs.append(Pair(recordIndex: index, record: record, window: live[liveIndex]))
+        }
+        return result
+    }
+
+    private nonisolated static func plans(for layout: Layout, pairs: [Pair], live: [LiveWindow], in environment: DisplayEnvironment)
+        -> [(DisplayInfo, SpacePlan)] {
+        environment.displays.map { display in
+            (display, SpacePlanner.plan(desired: desiredSlots(on: display, layout: layout, pairs: pairs),
+                                        current: currentSlots(on: display, live: live)))
+        }
+    }
+
     /// 恢复流程：配对 → 规划各屏全屏顺序 → 退出需要重排的全屏 → 摆放普通窗口 → 按顺序重新进入全屏。
     /// 每一步前检查 `shouldContinue`：显示器在恢复途中又变化时立即中止，避免按过时的环境挪窗口。
     public static func restore(_ layout: Layout, in environment: DisplayEnvironment,
@@ -81,21 +103,11 @@ public enum Restorer {
         }
         let live = WindowCatalog.capture(in: environment)
         let liveByID = Dictionary(live.map { ($0.windowID, $0) }, uniquingKeysWith: { first, _ in first })
-        let matches = WindowMatcher.match(saved: layout.windows.map(\.matchCandidate), live: live.map(\.matchCandidate))
+        let (pairs, notFound, missingDisplay) = pairUp(layout, live: live, in: environment)
+        report.notFound = notFound
+        report.failed = missingDisplay.map { "\($0)：目标显示器未接入" }
 
-        var pairs: [Pair] = []
-        for (index, record) in layout.windows.enumerated() {
-            guard let liveIndex = matches[index] else { report.notFound.append(label(record)); continue }
-            guard environment.display(uuid: record.displayUUID) != nil else {
-                report.failed.append("\(label(record))：目标显示器未接入"); continue
-            }
-            pairs.append(Pair(recordIndex: index, record: record, window: live[liveIndex]))
-        }
-
-        let plans = environment.displays.map { display in
-            (display, SpacePlanner.plan(desired: desiredSlots(on: display, layout: layout, pairs: pairs),
-                                        current: currentSlots(on: display, live: live)))
-        }
+        let plans = plans(for: layout, pairs: pairs, live: live, in: environment)
         let reentering = Set(plans.flatMap { $0.1.steps.map(\.windowID) })
 
         for pair in pairs where pair.window.isFullScreen && (reentering.contains(pair.window.windowID) || !pair.record.isFullScreen) {
@@ -134,7 +146,7 @@ public enum Restorer {
 
     // MARK: - 规划输入
 
-    private static func desiredSlots(on display: DisplayInfo, layout: Layout, pairs: [Pair]) -> [SpaceSlot] {
+    private nonisolated static func desiredSlots(on display: DisplayInfo, layout: Layout, pairs: [Pair]) -> [SpaceSlot] {
         let pairByRecord = Dictionary(uniqueKeysWithValues: pairs.map { ($0.recordIndex, $0) })
         return layout.spaceSequence(on: display.uuid).compactMap { item in
             guard let index = item else { return .desktop }
@@ -143,7 +155,7 @@ public enum Restorer {
         }
     }
 
-    private static func currentSlots(on display: DisplayInfo, live: [LiveWindow]) -> [SpaceSlot] {
+    private nonisolated static func currentSlots(on display: DisplayInfo, live: [LiveWindow]) -> [SpaceSlot] {
         guard let spaces = SkyLight.spaces(onDisplay: display.uuid)?.spaces else { return [] }
         var slots: [SpaceSlot] = []
         for space in spaces {
@@ -244,7 +256,7 @@ public enum Restorer {
         try? await Task.sleep(for: .seconds(seconds))
     }
 
-    private static func label(_ record: WindowRecord) -> String {
+    private nonisolated static func label(_ record: WindowRecord) -> String {
         record.title.isEmpty ? record.appName : "\(record.appName)「\(record.title)」"
     }
 }
