@@ -37,4 +37,11 @@ private func candidate(_ bundleID: String, _ title: String, _ windowID: UInt32? 
         let live = [candidate("notes", "Notes", 5)]
         #expect(WindowMatcher.match(saved: saved, live: live) == [0: 0])
     }
+
+    @Test func closedWindowDoesNotStealNewWindow() {
+        // 实测：微信「Photos and Videos」关了，新开的「WeChat (Window)」不能被当成它挪走
+        let saved = [candidate("wechat", "Weixin", 253), candidate("wechat", "Photos and Videos", 28634)]
+        let live = [candidate("wechat", "Weixin", 253), candidate("wechat", "WeChat (Window)", 29015)]
+        #expect(WindowMatcher.match(saved: saved, live: live) == [0: 0])
+    }
 }

@@ -16,3 +16,11 @@ public enum Displays {
         return CFUUIDCreateString(nil, uuid) as String
     }
 }
+
+public enum MissionControl {
+    /// 系统设置 → 桌面与程序坞 →"根据最近的使用情况自动重新排列空间"。未设置时默认开启。
+    /// 开启时 macOS 会按使用顺序挪动 Space，与恢复 Space 顺序相冲突。
+    public static var rearrangesSpacesAutomatically: Bool {
+        UserDefaults(suiteName: "com.apple.dock")?.object(forKey: "mru-spaces") as? Bool ?? true
+    }
+}

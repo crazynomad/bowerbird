@@ -32,7 +32,7 @@ import Testing
                                    displayUUID: "37D8832A", frame: Rect(x: 0, y: 34, width: 1710, height: 1073),
                                    isFullScreen: true, spaceIndex: 2, windowID: 8887)]
         )
-        try store.save(layout)
-        #expect(store.load(environmentKey: environment.key) == layout)
+        try store.save(layout, kind: .pinned)
+        #expect(store.load(environmentKey: environment.key, kind: .pinned) == layout)
     }
 }

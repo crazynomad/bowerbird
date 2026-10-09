@@ -1,13 +1,15 @@
 import AppKit
 import BundlerCore
 
-/// 调试用命令行：
-///   MonitorBundler dump            列出当前环境和所有窗口
-///   MonitorBundler save [名称]      保存当前布局（与菜单栏共用存储）
-///   MonitorBundler restore         按已保存布局恢复普通窗口
+/// 调试用命令行（与菜单栏共用存储）：
+///   MonitorBundler dump                 列出当前环境和所有窗口
+///   MonitorBundler pin [名称]            钉住当前布局
+///   MonitorBundler learn                写入一次自动记录
+///   MonitorBundler restore [布局.json]   恢复（默认按 钉住 → 自动记录 选择）
+///   MonitorBundler derive <布局.json>    按默认规则把某布局推导到当前环境，输出 JSON
 @MainActor
 enum CLI {
-    static func run(command: String, arguments: [String]) -> Int32 {
+    static func run(command: String, arguments: [String]) async -> Int32 {
         guard AX.isTrusted else {
             print("需要辅助功能权限：系统设置 → 隐私与安全性 → 辅助功能")
             return 1
@@ -27,12 +29,13 @@ enum CLI {
             }
             return 0
 
-        case "save":
-            let name = arguments.first ?? store.load(environmentKey: environment.key)?.name ?? environment.suggestedName
+        case "pin", "learn":
+            let kind: LayoutKind = command == "pin" ? .pinned : .learned
+            let name = arguments.first ?? store.load(environmentKey: environment.key, kind: kind)?.name ?? environment.suggestedName
             let layout = Restorer.snapshot(of: environment, name: name)
             do {
-                try store.save(layout)
-                print("已保存「\(name)」\(layout.windows.count) 个窗口 → \(store.directory.path)")
+                try store.save(layout, kind: kind)
+                print("已保存「\(name)」\(layout.windows.count) 个窗口（\(command)）→ \(store.directory.path)")
                 return 0
             } catch {
                 print("保存失败：\(error)")
@@ -40,17 +43,44 @@ enum CLI {
             }
 
         case "restore":
-            guard let layout = store.load(environmentKey: environment.key) else {
-                print("当前环境没有保存的布局")
-                return 1
+            let layout: Layout
+            if let path = arguments.first {
+                guard let loaded = load(path) else { return 1 }
+                layout = loaded
+            } else {
+                guard let (resolved, source) = LayoutResolver.resolve(for: environment, previousEnvironmentKey: nil, store: store) else {
+                    print("当前环境没有保存的布局")
+                    return 1
+                }
+                print("使用\(source.label)布局")
+                layout = resolved
             }
-            let (report, _) = Restorer.restore(layout, in: environment)
-            print("恢复「\(layout.name)」：\(report.summary)\n\(report.details)")
+            let started = Date()
+            let report = await Restorer.restore(layout, in: environment)
+            print("恢复「\(layout.name)」：\(report.summary)（\(String(format: "%.1f", Date().timeIntervalSince(started)))s）\n\(report.details)")
             return report.failed.isEmpty ? 0 : 1
 
+        case "derive":
+            guard let path = arguments.first, let source = load(path),
+                  let data = try? LayoutStore.encode(LayoutMapper.derive(from: source, to: environment)) else {
+                print("用法：derive <布局.json>")
+                return 2
+            }
+            FileHandle.standardOutput.write(data)
+            return 0
+
         default:
-            print("未知命令 \(command)。可用：dump / save [名称] / restore")
+            print("未知命令 \(command)。可用：dump / pin [名称] / learn / restore [布局.json] / derive <布局.json>")
             return 2
+        }
+    }
+
+    private static func load(_ path: String) -> Layout? {
+        do {
+            return try LayoutStore.load(from: URL(fileURLWithPath: path))
+        } catch {
+            print("读取 \(path) 失败：\(error)")
+            return nil
         }
     }
 }

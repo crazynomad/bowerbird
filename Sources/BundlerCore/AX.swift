@@ -37,6 +37,17 @@ public enum AX {
     }
 
     public static func isFullScreen(_ element: AXUIElement) -> Bool { value(element, "AXFullScreen") ?? false }
+
+    @discardableResult
+    public static func setFullScreen(_ element: AXUIElement, _ on: Bool) -> Bool {
+        AXUIElementSetAttributeValue(element, "AXFullScreen" as CFString, on as CFBoolean) == .success
+    }
+
+    /// 置为应用的主窗口并提到最前；随后激活应用时 macOS 会切到它所在的 Space
+    public static func raise(_ element: AXUIElement) {
+        AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
+        AXUIElementPerformAction(element, kAXRaiseAction as CFString)
+    }
     public static func isMinimized(_ element: AXUIElement) -> Bool { value(element, kAXMinimizedAttribute) ?? false }
     public static func title(of element: AXUIElement) -> String { value(element, kAXTitleAttribute) ?? "" }
 }

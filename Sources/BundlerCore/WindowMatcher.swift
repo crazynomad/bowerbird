@@ -13,7 +13,8 @@ public struct MatchCandidate: Equatable, Sendable {
 /// 把保存的窗口记录与当前窗口配对。按可靠程度分三轮，每个窗口最多配对一次：
 /// 1. 同应用 + 同 CGWindowID：同一次登录内稳定，标题变了也能认出（Chrome、终端）
 /// 2. 同应用 + 标题完全相同：重启后 ID 会变，靠标题认
-/// 3. 同应用剩余窗口按创建顺序（ID 升序）依次配对
+/// 3. 同应用剩余窗口按创建顺序（ID 升序）依次配对。仅用于第 1 轮一个都没配上的应用（应用或系统重启过）；
+///    若该应用有窗口按 ID 配上，说明它一直开着，剩下的记录对应已关闭的窗口，不能去抢新开的窗口
 public enum WindowMatcher {
     /// 返回 保存记录下标 → 当前窗口下标
     public static func match(saved: [MatchCandidate], live: [MatchCandidate]) -> [Int: Int] {
@@ -31,8 +32,9 @@ public enum WindowMatcher {
         }
 
         pass { saved, live in saved.windowID != nil && saved.windowID == live.windowID }
+        let continuouslyRunning = Set(result.keys.map { saved[$0].bundleID })
         pass { saved, live in saved.title == live.title }
-        pass { _, _ in true }
+        pass { saved, _ in !continuouslyRunning.contains(saved.bundleID) }
         return result
     }
 }

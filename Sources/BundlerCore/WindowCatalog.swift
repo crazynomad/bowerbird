@@ -18,7 +18,7 @@ public struct LiveWindow {
     public var matchCandidate: MatchCandidate { MatchCandidate(bundleID: bundleID, title: title, windowID: windowID) }
 }
 
-@MainActor
+/// 不涉及 UI，可在任意线程调用
 public enum WindowCatalog {
     /// 枚举所有 Space 上普通应用的可见窗口（跳过最小化和隐藏辅助窗口）
     public static func capture(in environment: DisplayEnvironment) -> [LiveWindow] {

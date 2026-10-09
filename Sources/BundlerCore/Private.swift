@@ -21,6 +21,7 @@ public struct DisplaySpaces: Equatable, Sendable {
 
 /// 某个 Space 在全局中的位置
 public struct SpaceLocation: Equatable, Sendable {
+    public let id: UInt64
     public let displayUUID: String
     /// 从 1 开始
     public let index: Int
@@ -68,10 +69,19 @@ public enum SkyLight {
         var map: [UInt64: SpaceLocation] = [:]
         for display in displaySpaces() {
             for (i, space) in display.spaces.enumerated() {
-                map[space.id] = SpaceLocation(displayUUID: display.displayUUID, index: i + 1, kind: space.kind)
+                map[space.id] = SpaceLocation(id: space.id, displayUUID: display.displayUUID, index: i + 1, kind: space.kind)
             }
         }
         return map
+    }
+
+    public static func spaces(onDisplay uuid: String) -> DisplaySpaces? {
+        displaySpaces().first { $0.displayUUID == uuid }
+    }
+
+    public static func location(ofWindow wid: CGWindowID) -> SpaceLocation? {
+        let locations = spaceLocations()
+        return spaceIDs(forWindow: wid).lazy.compactMap { locations[$0] }.first
     }
 
     private static func kind(of type: Int?) -> SpaceKind {

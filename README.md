@@ -2,13 +2,16 @@
 
 macOS 菜单栏工具：按显示器组合（家里 / 公司）保存窗口布局，换环境后自动恢复。背景和调研见 [IDEAS.md](IDEAS.md)。
 
-## 当前能力（阶段 1）
+## 当前能力（阶段 2）
 
 - 用显示器 UUID 集合识别环境，不依赖屏幕数量或排列。
-- 保存所有 Space 上普通应用的窗口，包括非当前 Space 和原生全屏窗口。
-- 恢复普通窗口的显示器、位置和尺寸，也能操作当前不可见 Space 上的窗口。原生全屏窗口暂时跳过（阶段 2）。
-- 显示器变化稳定 3 秒后自动恢复；变化未稳定时拒绝保存，防止存下被挤乱的布局。
-- 一键撤销上次恢复。
+- 恢复普通窗口的显示器、位置和尺寸，包括当前不可见 Space 上的窗口。
+- 恢复原生全屏窗口所在的显示器和 Space 顺序，只重排必须动的窗口。
+- 三级布局来源：📌 钉住 → 自动记录（稳定时每分钟一次）→ 首次进入时按默认规则从上一个环境推导。
+- 显示器变化稳定 3 秒后自动恢复；变化未稳定时拒绝钉住，自动记录也会跳过。
+- 一键撤销上次恢复，全屏状态和 Space 顺序也一并撤回。
+
+> 需关闭 系统设置 → 桌面与程序坞 →「根据最近的使用情况自动重新排列空间」，否则 Space 顺序会被系统打乱。菜单会检测并提示。
 
 ## 构建与运行
 
@@ -23,8 +26,10 @@ swift test                        # 单元测试
 ```bash
 swift build
 .build/debug/MonitorBundler dump          # 列出环境和所有窗口
-.build/debug/MonitorBundler save [名称]    # 保存当前布局
-.build/debug/MonitorBundler restore       # 恢复
+.build/debug/MonitorBundler pin [名称]     # 钉住当前布局
+.build/debug/MonitorBundler learn         # 写入一次自动记录
+.build/debug/MonitorBundler restore [布局.json]   # 恢复（默认：钉住 → 自动记录）
+.build/debug/MonitorBundler derive <布局.json>    # 按默认规则推导到当前环境，输出 JSON
 ```
 
 - 布局文件：`~/Library/Application Support/MonitorBundler/Layouts/`

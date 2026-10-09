@@ -5,7 +5,8 @@ import BundlerCore
 let arguments = Array(CommandLine.arguments.dropFirst())
 
 if let command = arguments.first {
-    exit(CLI.run(command: command, arguments: Array(arguments.dropFirst())))
+    Task { exit(await CLI.run(command: command, arguments: Array(arguments.dropFirst()))) }
+    dispatchMain()
 }
 
 let delegate = AppDelegate()
