@@ -102,8 +102,10 @@ public enum Restorer {
 
     /// 恢复流程：配对 → 规划各屏全屏顺序 → 退出需要重排的全屏 → 摆放普通窗口 → 按顺序重新进入全屏。
     /// 每一步前检查 `shouldContinue`：显示器在恢复途中又变化时立即中止，避免按过时的环境挪窗口。
+    /// `progress` 在每一步开始时报告正在做什么，供界面展示。
     public static func restore(_ layout: Layout, in environment: DisplayEnvironment,
-                               shouldContinue: () -> Bool = { true }) async -> RestoreReport {
+                               shouldContinue: () -> Bool = { true },
+                               progress: (String) -> Void = { _ in }) async -> RestoreReport {
         var report = RestoreReport()
         func aborted() -> Bool {
             if shouldContinue() { return false }
@@ -121,11 +123,13 @@ public enum Restorer {
 
         for pair in pairs where pair.window.isFullScreen && (reentering.contains(pair.window.windowID) || !pair.record.isFullScreen) {
             if aborted() { return report }
+            progress("退出全屏：\(pair.window.appName)")
             if !(await exitFullScreen(pair.window)) {
                 report.failed.append("\(pair.window.label)：退出全屏超时")
             }
         }
 
+        if pairs.contains(where: { !$0.record.isFullScreen }) { progress("摆放普通窗口") }
         for pair in pairs where !pair.record.isFullScreen {
             if aborted() { return report }
             await restoreFrame(pair, in: environment, report: &report)
@@ -138,6 +142,7 @@ public enum Restorer {
             for step in plan.steps {
                 if aborted() { return report }
                 guard let window = liveByID[step.windowID] else { continue }
+                progress("全屏：\(window.appName) → \(display.name)")
                 let anchor: LiveWindow? = if case .window(let id) = step.after { liveByID[id] } else { nil }
                 if let location = await enterFullScreen(window, on: display, after: anchor) {
                     report.fullScreenRestored.append("\(window.label) → \(display.name) 第 \(location.index) 个 Space")
@@ -151,6 +156,7 @@ public enum Restorer {
             report.alreadyInPlace.append(pair.window.label)
         }
         if aborted() { return report }
+        progress("切换各屏前台页")
         await restoreForeground(layout, pairs: pairs, in: environment, report: &report)
         return report
     }

@@ -20,18 +20,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastEnvironment = DisplayEnvironment(displays: [])
     private var transitions = TransitionTracker()
 
+    private let setupStatus = SetupStatus()
+    private var setupWindow: SetupWindowController?
+    private var statusTimer: Timer?
+    /// 恢复进行中：图标在空心/实心小鸟间闪烁，菜单与悬停提示显示当前步骤
+    private var restoreProgress: String?
+    private var blinkTimer: Timer?
+
     private var autoRestore: Bool {
         get { UserDefaults.standard.object(forKey: "autoRestore") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "autoRestore") }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem.button?.image = NSImage(systemSymbolName: "bird", accessibilityDescription: "Bowerbird")
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
 
-        if !AX.isTrusted { AX.requestTrust() }
+        // 首次启动默认开启开机自动启动，之后尊重用户在菜单里的选择
+        if !UserDefaults.standard.bool(forKey: "didSetUpLaunchAtLogin") {
+            LaunchAtLogin.setEnabled(true)
+            UserDefaults.standard.set(true, forKey: "didSetUpLaunchAtLogin")
+        }
+        setupStatus.refresh()
+        updateIcon()
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshSetupStatus() }
+        }
+        if !setupStatus.accessibility || !UserDefaults.standard.bool(forKey: "didShowSetup") {
+            showSetup()
+            UserDefaults.standard.set(true, forKey: "didShowSetup")
+        }
+
         if !SkyLight.isAvailable { Log.write("⚠️ SkyLight 私有接口不可用，Space 信息将缺失") }
         lastEnvironment = Displays.currentEnvironment()
         monitor = DisplayMonitor { [weak self] in self?.displaysSettled() }
@@ -49,12 +69,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let pinned = store.load(environmentKey: environment.key, kind: .pinned)
         let learned = store.load(environmentKey: environment.key, kind: .learned)
 
-        if !AX.isTrusted {
-            menu.addItem(item("⚠️ 需要辅助功能权限…", #selector(openAccessibilitySettings)))
+        if !setupStatus.accessibility {
+            menu.addItem(item("⚠️ 需要辅助功能权限…", #selector(showSetup)))
             menu.addItem(.separator())
         }
-        if MissionControl.rearrangesSpacesAutomatically {
-            menu.addItem(item("⚠️ 系统会自动重排 Space，顺序无法保持…", #selector(openDesktopSettings)))
+        if setupStatus.rearrangesSpaces {
+            menu.addItem(item("⚠️ 系统会自动重排 Space，顺序无法保持…", #selector(showSetup)))
             menu.addItem(.separator())
         }
         let environmentName = pinned?.name ?? learned?.name ?? environment.suggestedName
@@ -68,7 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         if isRestoring {
-            menu.addItem(info("正在恢复…"))
+            menu.addItem(info("正在恢复：\(restoreProgress ?? "准备中")…"))
         } else {
             menu.addItem(item("恢复布局", #selector(restoreLayout), enabled: pinned != nil || learned != nil))
             menu.addItem(item("撤销上次恢复", #selector(undoRestore), enabled: undoLayout != nil))
@@ -79,9 +99,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let auto = item("显示器变化时自动恢复", #selector(toggleAutoRestore))
         auto.state = autoRestore ? .on : .off
         menu.addItem(auto)
+        let launch = item("开机自动启动", #selector(toggleLaunchAtLogin))
+        launch.state = setupStatus.launchAtLogin ? .on : setupStatus.launchAtLoginNeedsApproval ? .mixed : .off
+        menu.addItem(launch)
         if let lastResult { menu.addItem(info("上次：\(lastResult)")) }
         menu.addItem(item("查看日志", #selector(openLog)))
         menu.addItem(item("打开布局文件夹", #selector(openLayoutFolder)))
+        menu.addItem(item("设置与权限…", #selector(showSetup)))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
@@ -146,14 +170,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(store.directory)
     }
 
-    @objc private func openAccessibilitySettings() {
-        AX.requestTrust()
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+    @objc private func toggleLaunchAtLogin() {
+        if setupStatus.launchAtLoginNeedsApproval {
+            LaunchAtLogin.openSettings()
+        } else {
+            LaunchAtLogin.setEnabled(!setupStatus.launchAtLogin)
+        }
+        refreshSetupStatus()
     }
 
-    @objc private func openDesktopSettings() {
-        alert("请关闭自动重排 Space", "系统设置 → 桌面与程序坞 → 调度中心 → 关闭「根据最近的使用情况自动重新排列空间」。")
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Desktop-Settings.extension")!)
+    // MARK: - 授权检测与引导
+
+    @objc private func showSetup() {
+        setupStatus.refresh()
+        if setupWindow == nil { setupWindow = SetupWindowController(status: setupStatus) }
+        setupWindow?.present()
+    }
+
+    private func refreshSetupStatus() {
+        let wasTrusted = setupStatus.accessibility
+        setupStatus.refresh()
+        if wasTrusted != setupStatus.accessibility {
+            Log.write(setupStatus.accessibility ? "辅助功能已授权" : "⚠️ 辅助功能权限被撤销")
+            updateIcon()
+        }
+    }
+
+    // MARK: - 菜单栏图标
+
+    private func updateIcon() {
+        guard let button = statusItem.button else { return }
+        let symbol: String
+        if isRestoring {
+            symbol = blinkPhase ? "bird.fill" : "bird"
+            button.toolTip = "Bowerbird 正在恢复：\(restoreProgress ?? "准备中")"
+        } else if !setupStatus.accessibility {
+            symbol = "exclamationmark.triangle"
+            button.toolTip = "Bowerbird 需要辅助功能权限"
+        } else {
+            symbol = "bird"
+            button.toolTip = lastResult.map { "Bowerbird · 上次：\($0)" } ?? "Bowerbird"
+        }
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Bowerbird")
+    }
+
+    private var blinkPhase = false
+
+    private func setRestoring(_ restoring: Bool) {
+        isRestoring = restoring
+        blinkTimer?.invalidate()
+        blinkTimer = nil
+        if restoring {
+            blinkTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.blinkPhase.toggle()
+                    self.updateIcon()
+                }
+            }
+        } else {
+            restoreProgress = nil
+            blinkPhase = false
+        }
+        updateIcon()
     }
 
     // MARK: - 自动恢复与自动记录
@@ -227,7 +306,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func restore(_ layout: Layout, source: LayoutSource?, in environment: DisplayEnvironment, trigger: String, keepUndo: Bool = true) async {
         guard !isRestoring else { return }
-        isRestoring = true
+        setRestoring(true)
         let changesBefore = monitor?.changeCount
 
         if keepUndo {
@@ -235,12 +314,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let report = await Restorer.restore(layout, in: environment) { [weak self] in
             self?.monitor?.changeCount == changesBefore
+        } progress: { [weak self] step in
+            self?.restoreProgress = step
+            self?.updateIcon()
         }
         let origin = source.map { "（\($0.label)）" } ?? ""
         lastResult = "\(trigger)恢复「\(layout.name)」\(origin)：\(report.summary)"
         Log.write("\(lastResult!)\n\(report.details)")
 
-        isRestoring = false
+        setRestoring(false)
         if settledWhileRestoring {
             settledWhileRestoring = false
             displaysSettled()
