@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.greentrain.monitor-bundler</string>
+	<string>com.greentrain.bowerbird</string>
 	<key>CFBundleName</key>
-	<string>Monitor Bundler</string>
+	<string>Bowerbird</string>
 	<key>CFBundleExecutable</key>
-	<string>MonitorBundler</string>
+	<string>Bowerbird</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

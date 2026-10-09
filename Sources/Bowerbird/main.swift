@@ -1,5 +1,7 @@
 import AppKit
-import BundlerCore
+import BowerbirdCore
+
+Migration.moveLegacyData()
 
 // 带子命令时作为命令行工具运行（便于调试），否则启动菜单栏应用
 let arguments = Array(CommandLine.arguments.dropFirst())

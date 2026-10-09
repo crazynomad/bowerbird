@@ -1,4 +1,4 @@
-import BundlerCore
+import BowerbirdCore
 import CoreGraphics
 import Testing
 

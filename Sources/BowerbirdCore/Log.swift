@@ -1,9 +1,9 @@
 import Foundation
 
-/// 追加写入 ~/Library/Logs/MonitorBundler.log，便于事后排查恢复结果
+/// 追加写入 ~/Library/Logs/Bowerbird.log，便于事后排查恢复结果
 public enum Log {
     public static let url = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Logs/MonitorBundler.log")
+        .appendingPathComponent("Logs/Bowerbird.log")
 
     public static func write(_ message: String) {
         let line = "[\(Date().formatted(.iso8601))] \(message)\n"

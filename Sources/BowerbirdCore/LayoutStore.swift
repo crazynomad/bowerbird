@@ -14,12 +14,12 @@ public enum LayoutKind: Sendable {
     }
 }
 
-/// 每个显示器环境最多两份 JSON：~/Library/Application Support/MonitorBundler/Layouts/<环境键>[.learned].json
+/// 每个显示器环境最多两份 JSON：~/Library/Application Support/Bowerbird/Layouts/<环境键>[.learned].json
 public struct LayoutStore: Sendable {
     public let directory: URL
 
     public init(directory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("MonitorBundler/Layouts", isDirectory: true)) {
+        .appendingPathComponent("Bowerbird/Layouts", isDirectory: true)) {
         self.directory = directory
     }
 

@@ -2,11 +2,11 @@
 import PackageDescription
 
 let package = Package(
-    name: "MonitorBundler",
+    name: "Bowerbird",
     platforms: [.macOS(.v14)],
     targets: [
-        .target(name: "BundlerCore"),
-        .executableTarget(name: "MonitorBundler", dependencies: ["BundlerCore"]),
-        .testTarget(name: "BundlerCoreTests", dependencies: ["BundlerCore"]),
+        .target(name: "BowerbirdCore"),
+        .executableTarget(name: "Bowerbird", dependencies: ["BowerbirdCore"]),
+        .testTarget(name: "BowerbirdCoreTests", dependencies: ["BowerbirdCore"]),
     ]
 )

@@ -1,13 +1,13 @@
 import AppKit
-import BundlerCore
+import BowerbirdCore
 
 /// 调试用命令行（与菜单栏共用存储）：
-///   MonitorBundler dump                 列出当前环境和所有窗口
-///   MonitorBundler pin [名称]            钉住当前布局
-///   MonitorBundler learn                写入一次自动记录
-///   MonitorBundler restore [布局.json]   恢复（默认按 钉住 → 自动记录 选择）
-///   MonitorBundler derive <布局.json>    按默认规则把某布局推导到当前环境，输出 JSON
-///   MonitorBundler diff [布局.json]      只读对比当前窗口与布局（默认：钉住 → 自动记录）
+///   Bowerbird dump                 列出当前环境和所有窗口
+///   Bowerbird pin [名称]            钉住当前布局
+///   Bowerbird learn                写入一次自动记录
+///   Bowerbird restore [布局.json]   恢复（默认按 钉住 → 自动记录 选择）
+///   Bowerbird derive <布局.json>    按默认规则把某布局推导到当前环境，输出 JSON
+///   Bowerbird diff [布局.json]      只读对比当前窗口与布局（默认：钉住 → 自动记录）
 @MainActor
 enum CLI {
     static func run(command: String, arguments: [String]) async -> Int32 {

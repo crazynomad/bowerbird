@@ -1,5 +1,5 @@
 import AppKit
-import BundlerCore
+import BowerbirdCore
 
 /// 监听显示器变化，等配置稳定后才回调。
 /// 扩展坞插拔会在几秒内连续触发多次变化，每次都重新计时。

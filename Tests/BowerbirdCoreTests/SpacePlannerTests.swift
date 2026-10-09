@@ -1,4 +1,4 @@
-import BundlerCore
+import BowerbirdCore
 import Testing
 
 @Suite struct SpacePlannerTests {

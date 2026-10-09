@@ -1,5 +1,5 @@
 import AppKit
-import BundlerCore
+import BowerbirdCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -26,7 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem.button?.image = NSImage(systemSymbolName: "rectangle.3.group", accessibilityDescription: "Monitor Bundler")
+        statusItem.button?.image = NSImage(systemSymbolName: "bird", accessibilityDescription: "Bowerbird")
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu

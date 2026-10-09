@@ -1,4 +1,4 @@
-# Monitor Bundler
+# Bowerbird
 
 macOS 菜单栏工具：按显示器组合（家里 / 公司）保存窗口布局，换环境后自动恢复。背景和调研见 [IDEAS.md](IDEAS.md)。
 
@@ -17,8 +17,8 @@ macOS 菜单栏工具：按显示器组合（家里 / 公司）保存窗口布�
 ## 构建与运行
 
 ```bash
-./scripts/build-app.sh            # 构建并签名 build/MonitorBundler.app
-open build/MonitorBundler.app     # 首次运行需在 系统设置 → 隐私与安全性 → 辅助功能 中授权
+./scripts/build-app.sh            # 构建并签名 build/Bowerbird.app
+open build/Bowerbird.app     # 首次运行需在 系统设置 → 隐私与安全性 → 辅助功能 中授权
 swift test                        # 单元测试
 ```
 
@@ -26,14 +26,14 @@ swift test                        # 单元测试
 
 ```bash
 swift build
-.build/debug/MonitorBundler dump          # 列出环境和所有窗口
-.build/debug/MonitorBundler pin [名称]     # 钉住当前布局
-.build/debug/MonitorBundler learn         # 写入一次自动记录
-.build/debug/MonitorBundler restore [布局.json]   # 恢复（默认：钉住 → 自动记录）
-.build/debug/MonitorBundler derive <布局.json>    # 按默认规则推导到当前环境，输出 JSON
-.build/debug/MonitorBundler diff [布局.json]      # 只读对比当前窗口与布局
+.build/debug/Bowerbird dump          # 列出环境和所有窗口
+.build/debug/Bowerbird pin [名称]     # 钉住当前布局
+.build/debug/Bowerbird learn         # 写入一次自动记录
+.build/debug/Bowerbird restore [布局.json]   # 恢复（默认：钉住 → 自动记录）
+.build/debug/Bowerbird derive <布局.json>    # 按默认规则推导到当前环境，输出 JSON
+.build/debug/Bowerbird diff [布局.json]      # 只读对比当前窗口与布局
 ```
 
-- 布局文件：`~/Library/Application Support/MonitorBundler/Layouts/`
-- 日志：`~/Library/Logs/MonitorBundler.log`
-- 私有接口集中在 `Sources/BundlerCore/Private.swift`，macOS 升级后若失效，先检查这里。
+- 布局文件：`~/Library/Application Support/Bowerbird/Layouts/`
+- 日志：`~/Library/Logs/Bowerbird.log`
+- 私有接口集中在 `Sources/BowerbirdCore/Private.swift`，macOS 升级后若失效，先检查这里。

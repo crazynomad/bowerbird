@@ -1,4 +1,4 @@
-import BundlerCore
+import BowerbirdCore
 import Testing
 
 private func candidate(_ bundleID: String, _ title: String, _ windowID: UInt32? = nil) -> MatchCandidate {
