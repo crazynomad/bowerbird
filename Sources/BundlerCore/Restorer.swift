@@ -36,15 +36,49 @@ public enum Restorer {
         return Layout(environmentKey: environment.key, name: name, savedAt: Date(), displays: environment.displays, windows: records)
     }
 
+    /// 当前窗口与布局的差异，只读不移动。用于检查 macOS 原生恢复的效果。
+    /// 已关闭的窗口不算差异。
+    public nonisolated static func differences(from layout: Layout, in environment: DisplayEnvironment) -> [String] {
+        let live = WindowCatalog.capture(in: environment)
+        let matches = WindowMatcher.match(saved: layout.windows.map(\.matchCandidate), live: live.map(\.matchCandidate))
+        func name(_ uuid: String) -> String { environment.display(uuid: uuid)?.name ?? String(uuid.prefix(8)) }
+
+        return layout.windows.enumerated().compactMap { index, record in
+            guard let liveIndex = matches[index] else { return nil }
+            let window = live[liveIndex]
+            if window.displayUUID != record.displayUUID {
+                return "\(window.label)：在 \(name(window.displayUUID))，应在 \(name(record.displayUUID))"
+            }
+            if window.isFullScreen != record.isFullScreen {
+                return "\(window.label)：\(record.isFullScreen ? "应为全屏" : "不应全屏")"
+            }
+            if record.isFullScreen, let index = window.space?.index, index != record.spaceIndex {
+                return "\(window.label)：第 \(index) 个 Space，应为第 \(record.spaceIndex) 个"
+            }
+            if !record.isFullScreen, let display = environment.display(uuid: record.displayUUID),
+               !FrameMapper.isClose(window.frame, FrameMapper.place(record.frame, on: display.frame.cgRect)) {
+                return "\(window.label)：位置或尺寸不同"
+            }
+            return nil
+        }
+    }
+
     private struct Pair {
         let recordIndex: Int
         let record: WindowRecord
         let window: LiveWindow
     }
 
-    /// 恢复流程：配对 → 规划各屏全屏顺序 → 退出需要重排的全屏 → 摆放普通窗口 → 按顺序重新进入全屏
-    public static func restore(_ layout: Layout, in environment: DisplayEnvironment) async -> RestoreReport {
+    /// 恢复流程：配对 → 规划各屏全屏顺序 → 退出需要重排的全屏 → 摆放普通窗口 → 按顺序重新进入全屏。
+    /// 每一步前检查 `shouldContinue`：显示器在恢复途中又变化时立即中止，避免按过时的环境挪窗口。
+    public static func restore(_ layout: Layout, in environment: DisplayEnvironment,
+                               shouldContinue: () -> Bool = { true }) async -> RestoreReport {
         var report = RestoreReport()
+        func aborted() -> Bool {
+            if shouldContinue() { return false }
+            report.notes.append("显示器配置在恢复途中发生变化，已中止剩余步骤")
+            return true
+        }
         let live = WindowCatalog.capture(in: environment)
         let liveByID = Dictionary(live.map { ($0.windowID, $0) }, uniquingKeysWith: { first, _ in first })
         let matches = WindowMatcher.match(saved: layout.windows.map(\.matchCandidate), live: live.map(\.matchCandidate))
@@ -65,12 +99,14 @@ public enum Restorer {
         let reentering = Set(plans.flatMap { $0.1.steps.map(\.windowID) })
 
         for pair in pairs where pair.window.isFullScreen && (reentering.contains(pair.window.windowID) || !pair.record.isFullScreen) {
+            if aborted() { return report }
             if !(await exitFullScreen(pair.window)) {
                 report.failed.append("\(pair.window.label)：退出全屏超时")
             }
         }
 
         for pair in pairs where !pair.record.isFullScreen {
+            if aborted() { return report }
             await restoreFrame(pair, in: environment, report: &report)
         }
 
@@ -79,6 +115,7 @@ public enum Restorer {
                 report.notes.append("\(display.name)：全屏无法排在普通桌面之前，已依次排在其后")
             }
             for step in plan.steps {
+                if aborted() { return report }
                 guard let window = liveByID[step.windowID] else { continue }
                 let anchor: LiveWindow? = if case .window(let id) = step.after { liveByID[id] } else { nil }
                 if let location = await enterFullScreen(window, on: display, after: anchor) {

@@ -7,6 +7,7 @@ import BundlerCore
 ///   MonitorBundler learn                写入一次自动记录
 ///   MonitorBundler restore [布局.json]   恢复（默认按 钉住 → 自动记录 选择）
 ///   MonitorBundler derive <布局.json>    按默认规则把某布局推导到当前环境，输出 JSON
+///   MonitorBundler diff [布局.json]      只读对比当前窗口与布局（默认：钉住 → 自动记录）
 @MainActor
 enum CLI {
     static func run(command: String, arguments: [String]) async -> Int32 {
@@ -69,8 +70,24 @@ enum CLI {
             FileHandle.standardOutput.write(data)
             return 0
 
+        case "diff":
+            let layout: Layout
+            if let path = arguments.first {
+                guard let loaded = load(path) else { return 1 }
+                layout = loaded
+            } else {
+                guard let (resolved, _) = LayoutResolver.resolve(for: environment, previousEnvironmentKey: nil, store: store) else {
+                    print("当前环境没有保存的布局")
+                    return 1
+                }
+                layout = resolved
+            }
+            let differences = Restorer.differences(from: layout, in: environment)
+            print("与「\(layout.name)」相差 \(differences.count) 处" + differences.map { "\n  - \($0)" }.joined())
+            return 0
+
         default:
-            print("未知命令 \(command)。可用：dump / pin [名称] / learn / restore [布局.json] / derive <布局.json>")
+            print("未知命令 \(command)。可用：dump / pin [名称] / learn / restore [布局.json] / derive <布局.json> / diff [布局.json]")
             return 2
         }
     }
