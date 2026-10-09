@@ -88,7 +88,18 @@ flowchart TD
 
 ## 安装
 
-目前需要从源码构建（需要 Xcode 及 Swift 6 工具链）：
+### 方式一：下载预览版
+
+1. 到 [Releases](https://github.com/crazynomad/bowerbird/releases) 下载最新的 `Bowerbird-x.y.z.zip`（Apple 芯片和 Intel 都能用），解压后把 **Bowerbird** 拖进「应用程序」文件夹
+2. 双击打开。macOS 会提示**无法验证开发者**，先点「完成」关掉提示
+3. 打开 **系统设置 → 隐私与安全性**，滚到最下面，在 Bowerbird 那一行点 **「仍要打开」**，再确认一次
+
+> [!IMPORTANT]
+> 预览版还没有经过 Apple 公证，所以第一次打开需要上面的第 3 步，之后就和普通 App 一样了。如果你更习惯用终端，也可以执行 `xattr -dr com.apple.quarantine /Applications/Bowerbird.app`，效果相同。
+
+### 方式二：从源码构建
+
+需要 Xcode 及 Swift 6 工具链：
 
 ```bash
 git clone https://github.com/crazynomad/bowerbird.git
@@ -130,7 +141,7 @@ Bowerbird 会弹出一个设置窗口，逐项检查，每项都能一键处理�
 <details>
 <summary><b>为什么不上 Mac App Store？</b></summary>
 
-macOS 没有公开接口可以读取 Space 的顺序，也没法拿到其它 Space 上的窗口。Bowerbird 用了一些私有接口（和 yabai、AltTab 等工具的路子一样），这类 App 过不了 App Store 审核，只能从源码安装。
+macOS 没有公开接口可以读取 Space 的顺序，也没法拿到其它 Space 上的窗口。Bowerbird 用了一些私有接口（和 yabai、AltTab 等工具的路子一样），这类 App 过不了 App Store 审核，只能从 GitHub 下载或从源码构建。
 
 </details>
 
@@ -210,6 +221,7 @@ swift build
 .build/debug/Bowerbird derive <布局.json>     # 按默认规则推导到当前环境，输出 JSON
 .build/debug/Bowerbird diff [布局.json]       # 只读对比当前窗口与布局
 swift test                                   # 单元测试
+./scripts/build-app.sh --release             # 打包通用版本到 dist/
 ```
 
 </details>

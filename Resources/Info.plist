@@ -2,11 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleExecutable</key>
+	<string>Bowerbird</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.greentrain.bowerbird</string>
 	<key>CFBundleName</key>
-	<string>Bowerbird</string>
-	<key>CFBundleExecutable</key>
 	<string>Bowerbird</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
@@ -14,9 +14,13 @@
 	<string>0.1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 Burn Wang · MIT License</string>
 </dict>
 </plist>
