@@ -65,6 +65,31 @@ import Testing
         #expect(sequence(derived, builtin) == ["桌面", "Ghostty", "ChatGPT", "Claude", "Notes", "Chrome"])
     }
 
+    func foregrounds(_ layout: Layout) -> Set<String> {
+        Set(layout.windows.filter { $0.isForeground == true }.map(\.appName))
+    }
+
+    @Test func mergeKeepsForegroundOfHigherResolutionSource() {
+        // 公司：内建屏停在桌面，VP2770 停在 Claude，VX3209 停在 Chrome
+        var layout = office
+        layout.desktopForeground = ["BUILTIN"]
+        for i in layout.windows.indices where ["Claude", "Chrome"].contains(layout.windows[i].appName) {
+            layout.windows[i].isForeground = true
+        }
+        let derived = LayoutMapper.derive(from: layout, to: DisplayEnvironment(displays: [builtin, home]))
+        #expect(foregrounds(derived) == ["Claude"])
+        #expect(derived.desktopForeground == ["BUILTIN"])
+    }
+
+    @Test func mergeKeepsDesktopForegroundOfPrimarySource() {
+        var layout = office
+        layout.desktopForeground = ["VP2770"]
+        for i in layout.windows.indices where layout.windows[i].appName == "Chrome" { layout.windows[i].isForeground = true }
+        let derived = LayoutMapper.derive(from: layout, to: DisplayEnvironment(displays: [builtin, home]))
+        #expect(foregrounds(derived).isEmpty)
+        #expect(derived.desktopForeground == ["HOME"])
+    }
+
     @Test func resolverPrefersPinnedThenLearnedThenDerived() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -44,9 +44,15 @@ public enum LayoutMapper {
     public static func derive(from source: Layout, to environment: DisplayEnvironment) -> Layout {
         let mapping = displayMapping(from: source.displays, to: environment.displays)
         var records: [WindowRecord] = []
+        var desktopForeground: [String] = []
 
         for target in environment.displays {
             let sources = mapping.filter { $0.target.uuid == target.uuid }.map(\.source)
+            // 多块屏并入一块时只能有一个前台页，取排在最前（分辨率最高）的来源屏的前台
+            let primary = sources.first
+            if let primary, source.desktopForeground?.contains(primary.uuid) == true {
+                desktopForeground.append(target.uuid)
+            }
             // 合并后的序列：来源按映射顺序（内建屏、再按分辨率），普通桌面只保留第一次出现的位置
             var merged: [(record: WindowRecord, from: DisplayInfo)?] = []
             for display in sources {
@@ -63,8 +69,9 @@ public enum LayoutMapper {
             let desktopIndex = merged.firstIndex { $0 == nil }! + 1
 
             for (offset, item) in merged.enumerated() {
-                guard let (record, _) = item else { continue }
+                guard let (record, from) = item else { continue }
                 var mapped = record
+                if from.uuid != primary?.uuid { mapped.isForeground = nil }
                 mapped.displayUUID = target.uuid
                 mapped.spaceIndex = offset + 1
                 mapped.frame = Rect(x: 0, y: 0, width: target.frame.width, height: target.frame.height)
@@ -81,7 +88,7 @@ public enum LayoutMapper {
             }
         }
         return Layout(environmentKey: environment.key, name: "\(environment.suggestedName)（由「\(source.name)」推导）",
-                      savedAt: source.savedAt, displays: environment.displays, windows: records)
+                      savedAt: source.savedAt, displays: environment.displays, windows: records, desktopForeground: desktopForeground)
     }
 
     /// 外接屏按分辨率（面积）从高到低

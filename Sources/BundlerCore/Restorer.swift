@@ -3,6 +3,8 @@ import AppKit
 public struct RestoreReport: Sendable {
     public var moved: [String] = []
     public var fullScreenRestored: [String] = []
+    /// 恢复后各显示器切到的前台页
+    public var foreground: [String] = []
     public var alreadyInPlace: [String] = []
     public var notFound: [String] = []
     public var failed: [String] = []
@@ -19,7 +21,7 @@ public struct RestoreReport: Sendable {
     }
 
     public var details: String {
-        [("移动", moved), ("全屏", fullScreenRestored), ("未找到", notFound), ("失败", failed), ("注意", notes)]
+        [("移动", moved), ("全屏", fullScreenRestored), ("前台", foreground), ("未找到", notFound), ("失败", failed), ("注意", notes)]
             .filter { !$0.1.isEmpty }
             .map { "\($0.0)：\n" + $0.1.map { "  - \($0)" }.joined(separator: "\n") }
             .joined(separator: "\n")
@@ -33,7 +35,14 @@ public enum Restorer {
         let records = WindowCatalog.capture(in: environment)
             .sorted { $0.windowID < $1.windowID }
             .compactMap { window in environment.display(uuid: window.displayUUID).map { WindowRecord(window, display: $0) } }
-        return Layout(environmentKey: environment.key, name: name, savedAt: Date(), displays: environment.displays, windows: records)
+        let desktopForeground = SkyLight.displaySpaces()
+            .filter { display in
+                environment.display(uuid: display.displayUUID) != nil
+                    && display.spaces.first { $0.id == display.currentSpaceID }?.kind == .desktop
+            }
+            .map(\.displayUUID)
+        return Layout(environmentKey: environment.key, name: name, savedAt: Date(), displays: environment.displays,
+                      windows: records, desktopForeground: desktopForeground)
     }
 
     /// 当前窗口与布局的差异，只读不移动。用于检查 macOS 原生恢复的效果。
@@ -141,7 +150,42 @@ public enum Restorer {
         for pair in pairs where pair.record.isFullScreen && pair.window.isFullScreen && !reentering.contains(pair.window.windowID) {
             report.alreadyInPlace.append(pair.window.label)
         }
+        if aborted() { return report }
+        await restoreForeground(layout, pairs: pairs, in: environment, report: &report)
         return report
+    }
+
+    // MARK: - 前台页与焦点
+
+    /// 把每块屏切回保存时显示的那一页，最后把键盘焦点还给保存时最前面的窗口
+    private static func restoreForeground(_ layout: Layout, pairs: [Pair], in environment: DisplayEnvironment, report: inout RestoreReport) async {
+        for display in environment.displays {
+            let target: LiveWindow?
+            if let pair = pairs.first(where: { $0.record.isForeground == true && $0.record.displayUUID == display.uuid }) {
+                target = pair.window
+            } else if layout.desktopForeground?.contains(display.uuid) == true {
+                // 普通桌面本身无法激活，借桌面上的一个窗口切过去，优先保存时有焦点的那个
+                target = pairs
+                    .filter { !$0.record.isFullScreen && $0.record.displayUUID == display.uuid }
+                    .min { ($0.record.isFocused == true ? 0 : 1) < ($1.record.isFocused == true ? 0 : 1) }?
+                    .window
+                if target == nil { report.notes.append("\(display.name)：普通桌面上没有窗口，无法切回桌面") }
+            } else {
+                continue  // 旧布局没有前台信息
+            }
+            guard let target, let location = SkyLight.location(ofWindow: target.windowID) else { continue }
+            let page = location.kind == .fullScreen ? target.label : "普通桌面"
+            report.foreground.append("\(display.name) → \(page)")
+            if SkyLight.spaces(onDisplay: location.displayUUID)?.currentSpaceID != location.id {
+                await focus(target)
+            }
+        }
+        // 只在焦点窗口就在其显示器的当前页上时才激活，绝不为了焦点再切换页面
+        if let focused = pairs.first(where: { $0.record.isFocused == true })?.window,
+           let location = SkyLight.location(ofWindow: focused.windowID),
+           SkyLight.spaces(onDisplay: location.displayUUID)?.currentSpaceID == location.id {
+            await focus(focused)
+        }
     }
 
     // MARK: - 规划输入

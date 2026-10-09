@@ -13,6 +13,10 @@ public struct LiveWindow {
     public let isFullScreen: Bool
     public let displayUUID: String
     public let space: SpaceLocation?
+    /// 所在 Space 正是其显示器当前显示的那一页
+    public let isOnCurrentSpace: Bool
+    /// 最前面应用的焦点窗口
+    public let isFocused: Bool
 
     public var label: String { title.isEmpty ? appName : "\(appName)「\(title)」" }
     public var matchCandidate: MatchCandidate { MatchCandidate(bundleID: bundleID, title: title, windowID: windowID) }
@@ -23,8 +27,10 @@ public enum WindowCatalog {
     /// 枚举所有 Space 上普通应用的可见窗口（跳过最小化和隐藏辅助窗口）
     public static func capture(in environment: DisplayEnvironment) -> [LiveWindow] {
         let spaces = SkyLight.spaceLocations()
+        let currentSpaceIDs = Set(SkyLight.displaySpaces().compactMap(\.currentSpaceID))
         let realWindows = realWindowIDsByPID()
         let ownPID = ProcessInfo.processInfo.processIdentifier
+        let focusedWindowID = focusedWindowID()
 
         return NSWorkspace.shared.runningApplications
             .filter { $0.activationPolicy == .regular && $0.processIdentifier != ownPID }
@@ -44,10 +50,19 @@ public enum WindowCatalog {
                         frame: frame,
                         isFullScreen: AX.isFullScreen(element),
                         displayUUID: displayUUID,
-                        space: space
+                        space: space,
+                        isOnCurrentSpace: space.map { currentSpaceIDs.contains($0.id) } ?? false,
+                        isFocused: wid == focusedWindowID
                     )
                 }
             }
+    }
+
+    private static func focusedWindowID() -> CGWindowID? {
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              let window: AXUIElement = AX.value(AXUIElementCreateApplication(app.processIdentifier), kAXFocusedWindowAttribute)
+        else { return nil }
+        return AXBridge.windowID(of: window)
     }
 
     /// 远程令牌枚举会带出隐藏的辅助窗口；真实窗口必须在第 0 层、尺寸像样且属于某个 Space
@@ -84,7 +99,9 @@ extension WindowRecord {
             frame: FrameMapper.relative(window.frame, to: display.frame.cgRect),
             isFullScreen: window.isFullScreen,
             spaceIndex: window.space?.index ?? 0,
-            windowID: window.windowID
+            windowID: window.windowID,
+            isForeground: window.isFullScreen && window.isOnCurrentSpace ? true : nil,
+            isFocused: window.isFocused ? true : nil
         )
     }
 }

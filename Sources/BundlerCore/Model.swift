@@ -63,8 +63,13 @@ public struct WindowRecord: Codable, Equatable, Sendable {
     public var spaceIndex: Int
     /// 仅在同一次登录内有效，用于配对标题会变的窗口
     public var windowID: UInt32?
+    /// 全屏窗口且正是所在显示器当前显示的那一页
+    public var isForeground: Bool?
+    /// 保存时拥有键盘焦点
+    public var isFocused: Bool?
 
-    public init(bundleID: String, appName: String, title: String, displayUUID: String, frame: Rect, isFullScreen: Bool, spaceIndex: Int, windowID: UInt32? = nil) {
+    public init(bundleID: String, appName: String, title: String, displayUUID: String, frame: Rect, isFullScreen: Bool, spaceIndex: Int,
+                windowID: UInt32? = nil, isForeground: Bool? = nil, isFocused: Bool? = nil) {
         self.bundleID = bundleID
         self.appName = appName
         self.title = title
@@ -73,6 +78,8 @@ public struct WindowRecord: Codable, Equatable, Sendable {
         self.isFullScreen = isFullScreen
         self.spaceIndex = spaceIndex
         self.windowID = windowID
+        self.isForeground = isForeground
+        self.isFocused = isFocused
     }
 
     public var matchCandidate: MatchCandidate { MatchCandidate(bundleID: bundleID, title: title, windowID: windowID) }
@@ -84,12 +91,16 @@ public struct Layout: Codable, Equatable, Sendable {
     public var savedAt: Date
     public var displays: [DisplayInfo]
     public var windows: [WindowRecord]
+    /// 当前显示普通桌面的显示器；显示全屏页的显示器由 `WindowRecord.isForeground` 表示
+    public var desktopForeground: [String]?
 
-    public init(environmentKey: String, name: String, savedAt: Date, displays: [DisplayInfo], windows: [WindowRecord]) {
+    public init(environmentKey: String, name: String, savedAt: Date, displays: [DisplayInfo], windows: [WindowRecord],
+                desktopForeground: [String]? = nil) {
         self.environmentKey = environmentKey
         self.name = name
         self.savedAt = savedAt
         self.displays = displays
         self.windows = windows
+        self.desktopForeground = desktopForeground
     }
 }
