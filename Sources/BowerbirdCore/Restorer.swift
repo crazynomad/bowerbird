@@ -10,6 +10,8 @@ public struct RestoreReport: Sendable {
     public var failed: [String] = []
     /// 能恢复但与目标有出入的地方（例如全屏无法排到普通桌面之前）
     public var notes: [String] = []
+    /// 因显示器在途中变化而提前中止
+    public var wasAborted = false
 
     public init() {}
 
@@ -111,6 +113,7 @@ public enum Restorer {
         var report = RestoreReport()
         func aborted() -> Bool {
             if shouldContinue() { return false }
+            report.wasAborted = true
             report.notes.append("显示器配置在恢复途中发生变化，已中止剩余步骤")
             return true
         }

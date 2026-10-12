@@ -16,6 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var isRestoring = false
     /// 恢复期间显示器又稳定到新状态，待恢复结束后补处理
     private var settledWhileRestoring = false
+    /// 被显示器变化打断的自动恢复：环境稳定下来仍是同一个时重试
+    private var interrupted: (layout: Layout, source: LayoutSource, environment: DisplayEnvironment, attention: AttentionState?)?
     private var lastResult: String?
     private var lastEnvironment = DisplayEnvironment(displays: [])
     private var transitions = TransitionTracker()
@@ -340,7 +342,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         loggedMirroring = false
         registerNewDisplays()
         let environment = workEnvironment()
-        guard environment.key != lastEnvironment.key else { return }
+        if let pending = interrupted, pending.environment.key != environment.key { interrupted = nil }
+        guard environment.key != lastEnvironment.key else {
+            retryInterruptedRestore(in: environment)
+            return
+        }
         // 唤醒时若仍在锁屏，读不到任何窗口；等解锁后再判断，避免白白"用掉"这次切换
         guard !Session.isLocked else {
             if !settledWhileLocked { Log.write("显示器变为 \(describe(environment))，屏幕已锁定，解锁后再处理") }
@@ -377,6 +383,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// 自动恢复被途中的显示器变化打断（例如解锁瞬间外接屏还在陆续上线），环境稳定后仍是同一个就重来一次
+    private func retryInterruptedRestore(in environment: DisplayEnvironment) {
+        guard let pending = interrupted, pending.environment.key == environment.key, !Session.isLocked else { return }
+        interrupted = nil
+        Log.write("上次自动恢复被打断，显示器已稳定，重试「\(pending.layout.name)」")
+        Task { await restore(pending.layout, source: pending.source, in: environment, trigger: "自动", attention: pending.attention) }
+    }
+
     // MARK: - 注意力
 
     /// 只在用户操作（切换应用、切换 Space）时观察，不定时轮询：
@@ -392,6 +406,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let unlock: @Sendable (Notification) -> Void = { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.settledWhileLocked else { return }
+                // 解锁瞬间外接屏往往还在陆续上线：交给稳定后的回调处理，否则恢复刚开始就会被打断
+                guard self.monitor?.isSettling != true else {
+                    Log.write("屏幕已解锁，等显示器稳定后再处理")
+                    return
+                }
                 Log.write("屏幕已解锁，补处理显示器变化")
                 self.displaysSettled()
             }
@@ -484,6 +503,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let origin = source.map { "（\($0.label)）" } ?? ""
         lastResult = "\(trigger)恢复「\(layout.name)」\(origin)：\(report.summary)"
         Log.write("\(lastResult!)\n\(report.details)")
+        if report.wasAborted, trigger == "自动", let source {
+            interrupted = (layout, source, environment, attention)
+        }
 
         setRestoring(false)
         if settledWhileRestoring {
