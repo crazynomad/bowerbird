@@ -103,7 +103,9 @@ public enum Restorer {
     /// 恢复流程：配对 → 规划各屏全屏顺序 → 退出需要重排的全屏 → 摆放普通窗口 → 按顺序重新进入全屏。
     /// 每一步前检查 `shouldContinue`：显示器在恢复途中又变化时立即中止，避免按过时的环境挪窗口。
     /// `progress` 在每一步开始时报告正在做什么，供界面展示。
+    /// `attention` 为最近的注意力状态（换环境时传入），恢复后的前台页与焦点会延续它，见 `ForegroundPlanner`。
     public static func restore(_ layout: Layout, in environment: DisplayEnvironment,
+                               attention: AttentionState? = nil,
                                shouldContinue: () -> Bool = { true },
                                progress: (String) -> Void = { _ in }) async -> RestoreReport {
         var report = RestoreReport()
@@ -157,37 +159,38 @@ public enum Restorer {
         }
         if aborted() { return report }
         progress("切换各屏前台页")
-        await restoreForeground(layout, pairs: pairs, in: environment, report: &report)
+        await restoreForeground(layout, pairs: pairs, in: environment, attention: attention, report: &report)
         return report
     }
 
     // MARK: - 前台页与焦点
 
-    /// 把每块屏切回保存时显示的那一页，最后把键盘焦点还给保存时最前面的窗口
-    private static func restoreForeground(_ layout: Layout, pairs: [Pair], in environment: DisplayEnvironment, report: inout RestoreReport) async {
+    /// 把每块屏切到规划好的那一页，最后把键盘焦点还给规划的窗口
+    private static func restoreForeground(_ layout: Layout, pairs: [Pair], in environment: DisplayEnvironment,
+                                          attention: AttentionState?, report: inout RestoreReport) async {
+        let plan = ForegroundPlanner.plan(layout: layout, environment: environment, attention: attention)
+        let windowByRecord = Dictionary(uniqueKeysWithValues: pairs.map { ($0.recordIndex, $0.window) })
+
         for display in environment.displays {
+            guard let choice = plan.pages[display.uuid] else { continue }  // 旧布局且无注意力信息
             let target: LiveWindow?
-            if let pair = pairs.first(where: { $0.record.isForeground == true && $0.record.displayUUID == display.uuid }) {
-                target = pair.window
-            } else if layout.desktopForeground?.contains(display.uuid) == true {
-                // 普通桌面本身无法激活，借桌面上的一个窗口切过去，优先保存时有焦点的那个
-                target = pairs
-                    .filter { !$0.record.isFullScreen && $0.record.displayUUID == display.uuid }
-                    .min { ($0.record.isFocused == true ? 0 : 1) < ($1.record.isFocused == true ? 0 : 1) }?
-                    .window
+            switch choice {
+            case .fullScreen(let record):
+                target = windowByRecord[record]
+            case .desktop(let via):
+                // 普通桌面本身无法激活，借桌面上的一个窗口切过去
+                target = via.flatMap { windowByRecord[$0] }
+                    ?? pairs.first { !$0.record.isFullScreen && $0.record.displayUUID == display.uuid }?.window
                 if target == nil { report.notes.append("\(display.name)：普通桌面上没有窗口，无法切回桌面") }
-            } else {
-                continue  // 旧布局没有前台信息
             }
             guard let target, let location = SkyLight.location(ofWindow: target.windowID) else { continue }
-            let page = location.kind == .fullScreen ? target.label : "普通桌面"
-            report.foreground.append("\(display.name) → \(page)")
+            report.foreground.append("\(display.name) → \(location.kind == .fullScreen ? target.label : "普通桌面")")
             if SkyLight.spaces(onDisplay: location.displayUUID)?.currentSpaceID != location.id {
                 await focus(target)
             }
         }
         // 只在焦点窗口就在其显示器的当前页上时才激活，绝不为了焦点再切换页面
-        if let focused = pairs.first(where: { $0.record.isFocused == true })?.window,
+        if let record = plan.focus, let focused = windowByRecord[record],
            let location = SkyLight.location(ofWindow: focused.windowID),
            SkyLight.spaces(onDisplay: location.displayUUID)?.currentSpaceID == location.id {
             await focus(focused)

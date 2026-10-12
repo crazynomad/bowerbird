@@ -20,6 +20,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastEnvironment = DisplayEnvironment(displays: [])
     private var transitions = TransitionTracker()
 
+    /// 最近的注意力（各屏在看哪一页、焦点在哪），换环境时前台延续它
+    private let attentionStore = AttentionStore()
+    private var attention: AttentionState?
+    private var attentionDebounce: Timer?
+    /// 锁屏期间显示器稳定下来，解锁后补处理
+    private var settledWhileLocked = false
+
     private let setupStatus = SetupStatus()
     private var setupWindow: SetupWindowController?
     private var statusTimer: Timer?
@@ -55,6 +62,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !SkyLight.isAvailable { Log.write("⚠️ SkyLight 私有接口不可用，Space 信息将缺失") }
         lastEnvironment = Displays.currentEnvironment()
         monitor = DisplayMonitor { [weak self] in self?.displaysSettled() }
+        attention = attentionStore.load()
+        observeUserActivity()
         learnTimer = Timer.scheduledTimer(withTimeInterval: Self.learnInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.learnIfStable() }
         }
@@ -244,7 +253,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let environment = Displays.currentEnvironment()
         guard environment.key != lastEnvironment.key else { return }
+        // 唤醒时若仍在锁屏，读不到任何窗口；等解锁后再判断，避免白白"用掉"这次切换
+        guard !Session.isLocked else {
+            if !settledWhileLocked { Log.write("显示器变为 \(describe(environment))，屏幕已锁定，解锁后再处理") }
+            settledWhileLocked = true
+            return
+        }
+        settledWhileLocked = false
         let transition = transitions.transition(from: lastEnvironment, to: environment)
+        Log.write("显示器：\(describe(lastEnvironment)) → \(describe(environment))")
         lastEnvironment = environment
 
         switch transition {
@@ -263,11 +280,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 Log.write("切换到新环境 \(environment.key)，没有可用布局")
                 return
             }
-            Log.write("切换到「\(layout.name)」（\(source.label)）")
+            // 前台延续最近的注意力；它若就来自这个环境（例如断开后在原地重连），则以布局为准
+            let carried = attention.flatMap { $0.environmentKey != environment.key ? $0 : nil }
+            Log.write("切换到「\(layout.name)」（\(source.label)）" + (carried.map { "，前台延续 \(describeAttention($0))" } ?? ""))
             if autoRestore {
-                Task { await restore(layout, source: source, in: environment, trigger: "自动") }
+                Task { await restore(layout, source: source, in: environment, trigger: "自动", attention: carried) }
             }
         }
+    }
+
+    // MARK: - 注意力
+
+    /// 只在用户操作（切换应用、切换 Space）时观察，不定时轮询：
+    /// 显示器变化后 macOS 自己挪出来的前台不是用户意图，不能当成注意力
+    private func observeUserActivity() {
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.activeSpaceDidChangeNotification] {
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.scheduleAttentionObservation() }
+            }
+        }
+        // 解锁后补处理锁屏期间到来的显示器变化
+        let unlock: @Sendable (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.settledWhileLocked else { return }
+                Log.write("屏幕已解锁，补处理显示器变化")
+                self.displaysSettled()
+            }
+        }
+        DistributedNotificationCenter.default().addObserver(forName: .init("com.apple.screenIsUnlocked"), object: nil, queue: .main, using: unlock)
+        center.addObserver(forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main, using: unlock)
+    }
+
+    /// 切换 Space 有动画，稍等再看；连续切换只观察最后一次
+    private func scheduleAttentionObservation() {
+        attentionDebounce?.invalidate()
+        attentionDebounce = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.observeAttention() }
+        }
+    }
+
+    private func observeAttention() {
+        guard AX.isTrusted, !isRestoring, !Session.isLocked, monitor?.isStable(for: 10) == true else { return }
+        let observed = AttentionObserver.observe(in: Displays.currentEnvironment())
+        guard attention.map({ !$0.sameContent(as: observed) }) ?? true else { return }
+        attention = observed
+        attentionStore.save(observed)
+    }
+
+    private func describe(_ environment: DisplayEnvironment) -> String {
+        environment.displays.isEmpty ? "（无）" : environment.displays.map { $0.isBuiltin ? "内建屏" : $0.name }.joined(separator: " + ")
+    }
+
+    private func describeAttention(_ state: AttentionState) -> String {
+        let pages = state.pages.map { page in
+            let display = state.displays.first { $0.uuid == page.displayUUID }.map { $0.isBuiltin ? "内建屏" : $0.name } ?? "?"
+            return "\(display)：\(page.fullScreen.map(appName(of:)) ?? "桌面")"
+        }
+        return pages.joined(separator: "，") + (state.focused.map { "；焦点 \(appName(of: $0))" } ?? "")
+    }
+
+    private func appName(of ref: WindowIdentity) -> String {
+        NSRunningApplication.runningApplications(withBundleIdentifier: ref.bundleID).first?.localizedName ?? ref.bundleID
     }
 
     /// 等 macOS 原生恢复完成后，与记录对比并记日志；只观察，不移动任何窗口
@@ -290,7 +364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func learnIfStable() {
-        guard AX.isTrusted, !isRestoring, let monitor, monitor.isStable(for: Self.learnAfterStable) else { return }
+        guard AX.isTrusted, !isRestoring, !Session.isLocked, let monitor, monitor.isStable(for: Self.learnAfterStable) else { return }
         let environment = Displays.currentEnvironment()
         let changesBefore = monitor.changeCount
         let name = store.load(environmentKey: environment.key, kind: .pinned)?.name
@@ -304,7 +378,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func restore(_ layout: Layout, source: LayoutSource?, in environment: DisplayEnvironment, trigger: String, keepUndo: Bool = true) async {
+    private func restore(_ layout: Layout, source: LayoutSource?, in environment: DisplayEnvironment, trigger: String,
+                         keepUndo: Bool = true, attention: AttentionState? = nil) async {
         guard !isRestoring else { return }
         setRestoring(true)
         let changesBefore = monitor?.changeCount
@@ -312,7 +387,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if keepUndo {
             undoLayout = await Task.detached { Restorer.snapshot(of: environment, name: "撤销点") }.value
         }
-        let report = await Restorer.restore(layout, in: environment) { [weak self] in
+        let report = await Restorer.restore(layout, in: environment, attention: attention) { [weak self] in
             self?.monitor?.changeCount == changesBefore
         } progress: { [weak self] step in
             self?.restoreProgress = step

@@ -5,7 +5,8 @@ import BowerbirdCore
 ///   Bowerbird dump                 列出当前环境和所有窗口
 ///   Bowerbird pin [名称]            钉住当前布局
 ///   Bowerbird learn                写入一次自动记录
-///   Bowerbird restore [布局.json]   恢复（默认按 钉住 → 自动记录 选择）
+///   Bowerbird restore [布局.json] [--attention 注意力.json]   恢复（默认按 钉住 → 自动记录 选择）
+///   Bowerbird attention             输出当前观察到的注意力（各屏前台页与焦点）JSON
 ///   Bowerbird derive <布局.json>    按默认规则把某布局推导到当前环境，输出 JSON
 ///   Bowerbird diff [布局.json]      只读对比当前窗口与布局（默认：钉住 → 自动记录）
 @MainActor
@@ -44,6 +45,13 @@ enum CLI {
             }
 
         case "restore":
+            var arguments = arguments
+            var attention: AttentionState?
+            if let flag = arguments.firstIndex(of: "--attention"), flag + 1 < arguments.count {
+                attention = AttentionStore(url: URL(fileURLWithPath: arguments[flag + 1])).load()
+                if attention == nil { print("读取注意力文件失败"); return 1 }
+                arguments.removeSubrange(flag...(flag + 1))
+            }
             let layout: Layout
             if let path = arguments.first {
                 guard let loaded = load(path) else { return 1 }
@@ -57,7 +65,7 @@ enum CLI {
                 layout = resolved
             }
             let started = Date()
-            let report = await Restorer.restore(layout, in: environment)
+            let report = await Restorer.restore(layout, in: environment, attention: attention)
             print("恢复「\(layout.name)」：\(report.summary)（\(String(format: "%.1f", Date().timeIntervalSince(started)))s）\n\(report.details)")
             return report.failed.isEmpty ? 0 : 1
 
@@ -68,6 +76,15 @@ enum CLI {
                 return 2
             }
             FileHandle.standardOutput.write(data)
+            return 0
+
+        case "attention":
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            if let data = try? encoder.encode(AttentionObserver.observe(in: environment)) {
+                FileHandle.standardOutput.write(data)
+            }
             return 0
 
         case "diff":
@@ -87,7 +104,7 @@ enum CLI {
             return 0
 
         default:
-            print("未知命令 \(command)。可用：dump / pin [名称] / learn / restore [布局.json] / derive <布局.json> / diff [布局.json]")
+            print("未知命令 \(command)。可用：dump / pin [名称] / learn / restore [布局.json] [--attention 文件] / derive <布局.json> / diff [布局.json] / attention")
             return 2
         }
     }
