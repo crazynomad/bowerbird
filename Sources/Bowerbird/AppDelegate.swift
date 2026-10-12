@@ -27,6 +27,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 锁屏期间显示器稳定下来，解锁后补处理
     private var settledWhileLocked = false
 
+    /// 显示器身份名册：只有工作屏参与环境识别、记录与恢复
+    private let registryStore = DisplayRegistryStore()
+    private var registry = DisplayRegistry()
+    private var newDisplayPrompt: NewDisplayPrompt?
+    private var displaysWindow: DisplaysWindowController?
+    private lazy var displaysModel = DisplaysModel { [weak self] uuid, role in self?.setRole(uuid, role) }
+    private var loggedMirroring = false
+
     private let setupStatus = SetupStatus()
     private var setupWindow: SetupWindowController?
     private var statusTimer: Timer?
@@ -60,7 +68,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         if !SkyLight.isAvailable { Log.write("⚠️ SkyLight 私有接口不可用，Space 信息将缺失") }
-        lastEnvironment = Displays.currentEnvironment()
+        registry = registryStore.load() ?? DisplayRegistry.bootstrap(from: store.allLayouts())
+        registryStore.save(registry)
+        registerNewDisplays()
+        lastEnvironment = workEnvironment()
         monitor = DisplayMonitor { [weak self] in self?.displaysSettled() }
         attention = attentionStore.load()
         observeUserActivity()
@@ -74,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let environment = Displays.currentEnvironment()
+        let environment = workEnvironment()
         let pinned = store.load(environmentKey: environment.key, kind: .pinned)
         let learned = store.load(environmentKey: environment.key, kind: .learned)
 
@@ -84,6 +95,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if setupStatus.rearrangesSpaces {
             menu.addItem(item("⚠️ 系统会自动重排 Space，顺序无法保持…", #selector(showSetup)))
+            menu.addItem(.separator())
+        }
+        for uuid in registry.pendingConfirmation where Displays.currentEnvironment().display(uuid: uuid) != nil {
+            menu.addItem(item("📽️ 新显示器「\(registry.entries[uuid]?.name ?? uuid)」待确认…", #selector(promptPendingDisplay)))
+            menu.addItem(.separator())
+        }
+        if Displays.isMirroring {
+            menu.addItem(info("镜像投屏中，已暂停"))
             menu.addItem(.separator())
         }
         let environmentName = pinned?.name ?? learned?.name ?? environment.suggestedName
@@ -114,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let lastResult { menu.addItem(info("上次：\(lastResult)")) }
         menu.addItem(item("查看日志", #selector(openLog)))
         menu.addItem(item("打开布局文件夹", #selector(openLayoutFolder)))
+        menu.addItem(item("显示器管理…", #selector(showDisplays)))
         menu.addItem(item("设置与权限…", #selector(showSetup)))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -143,7 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             alert("显示器配置刚发生变化", "macOS 可能正在临时挪动窗口，请等几秒再钉住，以免存下被挤乱的布局。")
             return
         }
-        let environment = Displays.currentEnvironment()
+        let environment = workEnvironment()
         let defaultName = store.load(environmentKey: environment.key, kind: .pinned)?.name
             ?? store.load(environmentKey: environment.key, kind: .learned)?.name
             ?? environment.suggestedName
@@ -160,7 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func restoreLayout() {
-        let environment = Displays.currentEnvironment()
+        let environment = workEnvironment()
         guard let (layout, source) = LayoutResolver.resolve(for: environment, previousEnvironmentKey: nil, store: store) else { return }
         Task { await restore(layout, source: source, in: environment, trigger: "手动") }
     }
@@ -168,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func undoRestore() {
         guard let undoLayout else { return }
         self.undoLayout = nil
-        Task { await restore(undoLayout, source: nil, in: Displays.currentEnvironment(), trigger: "撤销", keepUndo: false) }
+        Task { await restore(undoLayout, source: nil, in: workEnvironment(), trigger: "撤销", keepUndo: false) }
     }
 
     @objc private func toggleAutoRestore() { autoRestore.toggle() }
@@ -186,6 +206,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             LaunchAtLogin.setEnabled(!setupStatus.launchAtLogin)
         }
         refreshSetupStatus()
+    }
+
+    // MARK: - 显示器身份
+
+    /// Bowerbird 眼中的环境：去掉访客屏和尚未确认的新屏
+    private func workEnvironment() -> DisplayEnvironment {
+        registry.workEnvironment(Displays.currentEnvironment())
+    }
+
+    /// 登记新接入的外接屏：明显是临时投屏的直接记为访客屏，其余先按访客屏处理并询问
+    private func registerNewDisplays() {
+        let unknown = registry.unknownDisplays(in: Displays.currentEnvironment())
+        for display in unknown {
+            if let reason = DisplayRegistry.automaticGuestReason(for: display) {
+                registry.set(display, role: .guest, confirmed: true, reason: reason)
+                Log.write("新显示器「\(display.name)」判定为访客屏（\(reason)），不接管")
+            } else {
+                registry.set(display, role: .guest, confirmed: false)
+                Log.write("新显示器「\(display.name)」\(Int(display.frame.width))×\(Int(display.frame.height))，确认前按访客屏处理")
+            }
+        }
+        if !unknown.isEmpty { registryStore.save(registry) }
+        // 上次没回答就退出或重启了的，也要再问
+        promptPendingDisplay()
+    }
+
+    @objc private func promptPendingDisplay() {
+        guard newDisplayPrompt?.window?.isVisible != true,
+              let display = registry.pendingConfirmation.lazy.compactMap({ Displays.currentEnvironment().display(uuid: $0) }).first
+        else { return }
+        newDisplayPrompt = NewDisplayPrompt(display: display) { [weak self] role in
+            guard let self else { return }
+            self.setRole(display.uuid, role)
+            self.newDisplayPrompt = nil
+            self.promptPendingDisplay()  // 一次接了多块新屏时逐个询问
+        }
+        newDisplayPrompt?.present()
+    }
+
+    private func setRole(_ uuid: String, _ role: DisplayRole) {
+        guard var entry = registry.entries[uuid] else { return }
+        entry.role = role
+        entry.confirmed = true
+        entry.reason = nil
+        registry.entries[uuid] = entry
+        registryStore.save(registry)
+        Log.write("显示器「\(entry.name)」设为\(role == .work ? "工作屏" : "访客屏")")
+        reloadDisplaysModel()
+        // 身份变了，工作屏环境可能随之变化，按显示器变化处理（例如新确认的工作屏触发整理）
+        displaysSettled()
+    }
+
+    @objc private func showDisplays() {
+        reloadDisplaysModel()
+        if displaysWindow == nil { displaysWindow = DisplaysWindowController(model: displaysModel) }
+        displaysWindow?.present()
+    }
+
+    private func reloadDisplaysModel() {
+        displaysModel.reload(registry: registry, connected: Set(Displays.currentEnvironment().displays.map(\.uuid)))
     }
 
     // MARK: - 授权检测与引导
@@ -251,7 +331,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             settledWhileRestoring = true
             return
         }
-        let environment = Displays.currentEnvironment()
+        // 镜像投屏中：多半在演示，整体暂停
+        guard !Displays.isMirroring else {
+            if !loggedMirroring { Log.write("检测到镜像投屏，暂停处理") }
+            loggedMirroring = true
+            return
+        }
+        loggedMirroring = false
+        registerNewDisplays()
+        let environment = workEnvironment()
         guard environment.key != lastEnvironment.key else { return }
         // 唤醒时若仍在锁屏，读不到任何窗口；等解锁后再判断，避免白白"用掉"这次切换
         guard !Session.isLocked else {
@@ -321,8 +409,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func observeAttention() {
-        guard AX.isTrusted, !isRestoring, !Session.isLocked, monitor?.isStable(for: 10) == true else { return }
-        let observed = AttentionObserver.observe(in: Displays.currentEnvironment())
+        guard AX.isTrusted, !isRestoring, !Session.isLocked, !Displays.isMirroring, monitor?.isStable(for: 10) == true else { return }
+        let observed = AttentionObserver.observe(in: workEnvironment())
         guard attention.map({ !$0.sameContent(as: observed) }) ?? true else { return }
         attention = observed
         attentionStore.save(observed)
@@ -364,8 +452,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func learnIfStable() {
-        guard AX.isTrusted, !isRestoring, !Session.isLocked, let monitor, monitor.isStable(for: Self.learnAfterStable) else { return }
-        let environment = Displays.currentEnvironment()
+        guard AX.isTrusted, !isRestoring, !Session.isLocked, !Displays.isMirroring, let monitor, monitor.isStable(for: Self.learnAfterStable) else { return }
+        let environment = workEnvironment()
         let changesBefore = monitor.changeCount
         let name = store.load(environmentKey: environment.key, kind: .pinned)?.name
             ?? store.load(environmentKey: environment.key, kind: .learned)?.name

@@ -26,6 +26,7 @@ final class SetupWindowController: NSWindowController {
         let window = NSWindow(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Bowerbird 设置"
         window.isReleasedWhenClosed = false
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         self.init(window: window)
         window.contentView = NSHostingView(rootView: SetupView(status: status) { [weak self] in self?.close() })
         window.center()
@@ -34,7 +35,9 @@ final class SetupWindowController: NSWindowController {
     func present() {
         NSApp.activate()
         showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
+        // 激活请求可能被系统拒绝（用户正在用别的应用），无论如何都把窗口放到最前
+        window?.orderFrontRegardless()
+        window?.makeKey()
     }
 }
 

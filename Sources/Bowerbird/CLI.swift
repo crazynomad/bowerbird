@@ -16,8 +16,10 @@ enum CLI {
             print("需要辅助功能权限：系统设置 → 隐私与安全性 → 辅助功能")
             return 1
         }
-        let environment = Displays.currentEnvironment()
         let store = LayoutStore()
+        // 与菜单栏一致：只看工作屏
+        let registry = DisplayRegistryStore().load() ?? DisplayRegistry.bootstrap(from: store.allLayouts())
+        let environment = registry.workEnvironment(Displays.currentEnvironment())
 
         switch command {
         case "dump":
