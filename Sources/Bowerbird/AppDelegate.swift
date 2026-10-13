@@ -219,6 +219,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// 登记新接入的外接屏：明显是临时投屏的直接记为访客屏，其余先按访客屏处理并询问
     private func registerNewDisplays() {
+        // 锁屏期间的显示器信息不可靠（合盖时会冒出占位屏），弹窗也没人看得到；解锁后再登记
+        guard !Session.isLocked else { return }
         let unknown = registry.unknownDisplays(in: Displays.currentEnvironment())
         for display in unknown {
             if let reason = DisplayRegistry.automaticGuestReason(for: display) {

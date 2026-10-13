@@ -56,4 +56,13 @@ import Testing
         #expect(DisplayRegistry.automaticGuestReason(for: ipad) == "随航")
         #expect(DisplayRegistry.automaticGuestReason(for: vp2770) == nil)
     }
+
+    @Test func namelessPlaceholderWhileLockedIsIgnored() {
+        for name in ["", " (AirPlay) (1)", " (AirPlay) (2)"] {
+            let placeholder = DisplayInfo(uuid: "P", name: name, isBuiltin: false, frame: Rect(x: 0, y: 0, width: 1920, height: 1080))
+            #expect(DisplayRegistry.automaticGuestReason(for: placeholder) == "系统占位屏")
+        }
+        let tv = DisplayInfo(uuid: "TV", name: "Living Room (AirPlay)", isBuiltin: false, frame: Rect(x: 0, y: 0, width: 1920, height: 1080))
+        #expect(DisplayRegistry.automaticGuestReason(for: tv) == nil)
+    }
 }

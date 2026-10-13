@@ -72,6 +72,9 @@ public struct DisplayRegistry: Codable, Equatable, Sendable {
     public static func automaticGuestReason(for display: DisplayInfo) -> String? {
         // 随航（iPad）的显示器名固定包含 "Sidecar"
         if display.name.localizedCaseInsensitiveContains("Sidecar") { return "随航" }
+        // 合盖锁屏时 macOS 会临时报告没有名字的占位屏（日志里见过 "" 和 " (AirPlay) (1)"），真实显示器都有名字
+        let bareName = display.name.replacingOccurrences(of: #"\(AirPlay\)|\(\d+\)"#, with: "", options: .regularExpression)
+        if bareName.trimmingCharacters(in: .whitespaces).isEmpty { return "系统占位屏" }
         return nil
     }
 }
